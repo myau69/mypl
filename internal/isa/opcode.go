@@ -141,7 +141,7 @@ func LengthAt(code []byte, pc uint32) (int, error) {
 	}
 }
 
-func Tics(op Opcode) uint64 {
+func Ticks(op Opcode) uint64 {
 	switch op {
 	case OpLoad, OpStore:
 		return 3
