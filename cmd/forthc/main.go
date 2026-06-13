@@ -35,7 +35,7 @@ func main() {
 		MemorySize: uint32(*memorySz),
 	})
 	if err != nil {
-		dit(err)
+		die(err)
 	}
 
 	if err := binaryfmt.WriteFile(*outPath, res.Image); err != nil {

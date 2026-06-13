@@ -239,7 +239,7 @@ func builtinNoArg(tok string) (isa.Opcode, bool) {
 }
 
 func emitPushToken(e *emitter, tok Token) error {
-	if v, err := parseLiteral(tok.Text); err != nil {
+	if v, err := parseLiteral(tok.Text); err == nil {
 		e.emitImm(isa.OpPush, v)
 		return nil
 	}
