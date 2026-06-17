@@ -4,11 +4,16 @@ import (
 	"encoding/binary"
 	"fmt"
 	"mypl/internal/binaryfmt"
+	"mypl/internal/compiler"
 	"mypl/internal/isa"
+	"sort"
+	"strings"
 )
 
 const (
+	IOInDataAddr  uint32 = 0xFF00
 	IOOutDataAddr uint32 = 0xFF04
+	IOInReadyAddr uint32 = 0xFF08
 )
 
 type RunResult struct {
@@ -30,6 +35,15 @@ type cpu struct {
 	tick         uint64
 	instructions uint64
 	trace        Trace
+
+	inputHandlerAddr uint32
+	irqEnabled       bool
+	inIRQ            bool
+	pendingIRQ       bool
+	inputQueue       []int32
+	events           []InputEvent
+	nextEvent        int
+	lastEvent        string
 }
 
 func Run(img binaryfmt.Image, cfg Config) (RunResult, error) {
@@ -46,14 +60,28 @@ func Run(img binaryfmt.Image, cfg Config) (RunResult, error) {
 	copy(m[img.CodeBase:], img.Code)
 	copy(m[img.DataBase:], img.Data)
 
+	if img.InputHandlerAddr != 0 {
+		binary.LittleEndian.PutUint32(m[compiler.InputHandlerSlotAddr:compiler.InputHandlerSlotAddr+4],
+			img.InputHandlerAddr)
+	}
+
+	events := append([]InputEvent(nil), cfg.Events...)
+	sort.Slice(events, func(i, j int) bool { return events[i].Tick < events[j].Tick })
+
 	c := &cpu{
-		mem: m,
-		pc:  img.EntryPoint,
+		mem:              m,
+		pc:               img.EntryPoint,
+		irqEnabled:       true,
+		inputHandlerAddr: img.InputHandlerAddr,
+		events:           events,
 	}
 
 	for {
 		if cfg.MaxTicks > 0 && c.tick >= cfg.MaxTicks {
 			return RunResult{}, fmt.Errorf("tick limit reached (%d)", cfg.MaxTicks)
+		}
+		if err := c.serviceInterruptIfNeeded(); err != nil {
+			return RunResult{}, err
 		}
 		op, instrLen, instrText, err := c.fetchDecode()
 		if err != nil {
@@ -65,7 +93,7 @@ func Run(img binaryfmt.Image, cfg Config) (RunResult, error) {
 		if err != nil {
 			return RunResult{}, fmt.Errorf("pc=%d instr=%s: %w", pcBefore, instrText, err)
 		}
-		c.tick += isa.Ticks(op)
+		c.advanceTicks(isa.Ticks(op))
 		c.instructions++
 
 		c.trace.Add(TraceEntry{
@@ -75,6 +103,8 @@ func Run(img binaryfmt.Image, cfg Config) (RunResult, error) {
 			Instr:     instrText,
 			DS:        cloneInt32(c.ds),
 			RS:        cloneU32(c.rs),
+			InIRQ:     c.inIRQ,
+			Event:     c.consumeEvent(),
 		})
 
 		if halt {
@@ -315,6 +345,19 @@ func (c *cpu) execute(op isa.Opcode, instrLen int) (bool, error) {
 	case isa.OpHalt:
 		c.pc = nextPC
 		return true, nil
+	case isa.OpEI:
+		c.irqEnabled = true
+		c.pc = nextPC
+	case isa.OpDI:
+		c.irqEnabled = false
+		c.pc = nextPC
+	case isa.OpIret:
+		ret, err := c.popRS()
+		if err != nil {
+			return false, err
+		}
+		c.inIRQ = false
+		c.pc = ret
 	default:
 		return false, fmt.Errorf("unknown opcode %d", op)
 	}
@@ -368,6 +411,23 @@ func (c *cpu) readByte(addr uint32) (byte, error) {
 }
 
 func (c *cpu) readWord(addr uint32) (int32, error) {
+	switch addr {
+	case IOInDataAddr:
+		if len(c.inputQueue) == 0 {
+			return 0, nil
+		}
+		v := c.inputQueue[0]
+		c.inputQueue = c.inputQueue[1:]
+		if len(c.inputQueue) == 0 {
+			c.pendingIRQ = false
+		}
+		return v, nil
+	case IOInReadyAddr:
+		if len(c.inputQueue) > 0 {
+			return 1, nil
+		}
+		return 0, nil
+	}
 	if int(addr)+4 > len(c.mem) {
 		return 0, fmt.Errorf("read word out of memory at %d", addr)
 	}
@@ -392,4 +452,41 @@ func cloneInt32(s []int32) []int32 {
 
 func cloneU32(s []uint32) []uint32 {
 	return append([]uint32(nil), s...)
+}
+
+func (c *cpu) serviceInterruptIfNeeded() error {
+	if !c.pendingIRQ || !c.irqEnabled || c.inIRQ || c.inputHandlerAddr == 0 {
+		return nil
+	}
+	c.rs = append(c.rs, c.pc)
+	c.pc = c.inputHandlerAddr
+	c.inIRQ = true
+	c.lastEvent = "trap: enter on_input"
+	c.advanceTicks(2)
+	return nil
+}
+
+func (c *cpu) advanceTicks(n uint64) {
+	for i := uint64(0); i < n; i++ {
+		c.tick++
+		c.injectEventsAtCurrentTick()
+	}
+}
+
+func (c *cpu) injectEventsAtCurrentTick() {
+	for c.nextEvent < len(c.events) && c.events[c.nextEvent].Tick == c.tick {
+		v, err := c.events[c.nextEvent].TokenAsWord()
+		if err == nil {
+			c.inputQueue = append(c.inputQueue, v)
+			c.pendingIRQ = true
+			c.lastEvent = strings.TrimSpace(c.lastEvent + fmt.Sprintf(" input@%d=%d", c.tick, v))
+		}
+		c.nextEvent++
+	}
+}
+
+func (c *cpu) consumeEvent() string {
+	e := c.lastEvent
+	c.lastEvent = ""
+	return strings.TrimSpace(e)
 }

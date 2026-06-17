@@ -6,8 +6,30 @@ import (
 	"os"
 )
 
+
+type InputEvent struct {
+	Tick uint64 `json:"tick"`
+	Token interface{} `json:"token"`
+}
 type Config struct {
 	MaxTicks uint64 `json:"max_ticks"`
+	Events []InputEvent `json:"events"`
+}
+
+func (e InputEvent) TokenAsWord() (int32, error) {
+	switch v := e.Token.(type) {
+	case float64:
+		return int32(v), nil
+	case string:
+		r := []rune(v)
+		if len(r) == 1 {
+			return int32(r[0]), nil
+		}
+		return 0, fmt.Errorf("token string must contain exactly one rune, got %q", v)
+	default:
+		return 0, fmt.Errorf("unsupported token type %T", v)
+	}
+
 }
 
 func LoadConfig(path string) (Config, error) {

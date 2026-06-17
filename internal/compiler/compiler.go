@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	DefaultCodeBase = uint32(0x0200)
-	DefaultDataBase = uint32(0x4000)
+	DefaultCodeBase      = uint32(0x0200)
+	DefaultDataBase      = uint32(0x4000)
+	InputHandlerSlotAddr = uint32(0x0010)
 )
 
 type Options struct {
@@ -266,14 +267,20 @@ func Compile(src string, opts Options) (Result, error) {
 		entry = symbols[firstProc]
 	}
 
+	inputHandlerAddr := uint32(0)
+	if v, ok := symbols["on_input"]; ok {
+		inputHandlerAddr = v
+	}
+
 	img := binaryfmt.Image{
-		Version:    binaryfmt.FormatV1,
-		MemorySize: opts.MemorySize,
-		CodeBase:   opts.CodeBase,
-		DataBase:   opts.DataBase,
-		EntryPoint: entry,
-		Code:       emit.code,
-		Data:       data,
+		Version:          binaryfmt.FormatV1,
+		MemorySize:       opts.MemorySize,
+		CodeBase:         opts.CodeBase,
+		DataBase:         opts.DataBase,
+		EntryPoint:       entry,
+		Code:             emit.code,
+		Data:             data,
+		InputHandlerAddr: inputHandlerAddr,
 	}
 
 	listing, err := buildListing(img)
@@ -314,6 +321,9 @@ func builtinNoArg(tok string) (isa.Opcode, bool) {
 		"ret":     isa.OpRet,
 		"execute": isa.OpExecute,
 		"halt":    isa.OpHalt,
+		"ei":      isa.OpEI,
+		"di":      isa.OpDI,
+		"iret":    isa.OpIret,
 	}
 	op, ok := m[tok]
 	return op, ok
