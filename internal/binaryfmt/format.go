@@ -50,7 +50,8 @@ func WriteFile(path string, img Image) error {
 		img.MemorySize = DefaultMemSz
 	}
 	h.MemorySize = img.MemorySize
-	h.CodeBase = img.DataBase
+	h.CodeBase = img.CodeBase
+	h.DataBase = img.DataBase
 	h.EntryPoint = img.EntryPoint
 	h.InputHandlerAddr = img.InputHandlerAddr
 	h.CodeSize = uint32(len(img.Code))

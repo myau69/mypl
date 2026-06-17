@@ -1,4 +1,4 @@
-.PHONY: test fmt
+.PHONY: test fmt compile simulate run-hello
 
 test:
 	go test ./...
@@ -11,3 +11,8 @@ compile:
 
 simulate:
 	go run ./cmd/forthsim -bin build/xt.bin -trace build/xt.trace.log
+
+run-hello:
+	mkdir -p build
+	go run ./cmd/forthc -src examples/hello.fth -out build/hello.bin -list build/hello.lst
+	go run ./cmd/forthsim -bin build/hello.bin -config configs/hello.json -trace build/hello.trace.log

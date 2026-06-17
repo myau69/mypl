@@ -376,7 +376,6 @@ func (c *cpu) readWord(addr uint32) (int32, error) {
 
 func (c *cpu) writeWord(addr uint32, v int32) error {
 	if addr == IOOutDataAddr {
-		// Output port: младший byte становится символом.
 		c.outputRunes = append(c.outputRunes, rune(v&0xFF))
 		return nil
 	}

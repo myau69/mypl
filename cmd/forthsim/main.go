@@ -40,7 +40,7 @@ func main() {
 	fmt.Printf("output: %q\n", res.Output)
 	fmt.Printf("instructions=%d ticks=%d\n", res.Instructions, res.Ticks)
 	fmt.Printf("---- trace ----")
-	fmt.Printf(res.Trace.String(*traceLimit))
+	fmt.Print(res.Trace.String(*traceLimit))
 
 	if *tracePath != "" {
 		if err := os.WriteFile(*tracePath, []byte(res.Trace.String(0)), 0o644); err != nil {
