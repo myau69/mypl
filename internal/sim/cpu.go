@@ -44,6 +44,7 @@ type cpu struct {
 	events           []InputEvent
 	nextEvent        int
 	lastEvent        string
+	vr               [isa.VectorRegisters][isa.VectorLanes]int32
 }
 
 func Run(img binaryfmt.Image, cfg Config) (RunResult, error) {
@@ -129,7 +130,10 @@ func (c *cpu) fetchDecode() (isa.Opcode, int, string, error) {
 	switch op {
 	case isa.OpPush, isa.OpJmp, isa.OpJz, isa.OpJnz, isa.OpJltz, isa.OpJgez, isa.OpJlez, isa.OpCall:
 		ln = 5
-		//case TODO: потом допилить остальные операции
+	case isa.OpVLoad, isa.OpVStore:
+		ln = 6 // opcode + reg + int32 address
+	case isa.OpVAdd, isa.OpVSub, isa.OpVMul, isa.OpVDiv, isa.OpVCmp:
+		ln = 4 // opcode + dst + a + b
 	}
 	if int(c.pc)+ln > len(c.mem) {
 		return 0, 0, "", fmt.Errorf("instruction outside memory")
@@ -139,7 +143,12 @@ func (c *cpu) fetchDecode() (isa.Opcode, int, string, error) {
 	case isa.OpPush, isa.OpJmp, isa.OpJz, isa.OpJnz, isa.OpJltz, isa.OpJgez, isa.OpJlez, isa.OpCall:
 		v := int32(binary.LittleEndian.Uint32(c.mem[c.pc+1 : c.pc+5]))
 		text = fmt.Sprintf("%s %d", op.String(), v)
-		//case TODO: потом допилить остальные операции
+	case isa.OpVLoad, isa.OpVStore:
+		reg := c.mem[c.pc+1]
+		v := int32(binary.LittleEndian.Uint32(c.mem[c.pc+2 : c.pc+6]))
+		text = fmt.Sprintf("%s V%d %d", op.String(), reg, v)
+	case isa.OpVAdd, isa.OpVSub, isa.OpVMul, isa.OpVDiv, isa.OpVCmp:
+		text = fmt.Sprintf("%s V%d V%d V%d", op.String(), c.mem[c.pc+1], c.mem[c.pc+2], c.mem[c.pc+3])
 	}
 	return op, ln, text, nil
 }
@@ -358,6 +367,64 @@ func (c *cpu) execute(op isa.Opcode, instrLen int) (bool, error) {
 		}
 		c.inIRQ = false
 		c.pc = ret
+	case isa.OpVLoad:
+		reg := int(c.mem[c.pc+1])
+		addr := uint32(readImm(c.pc + 2))
+		if reg >= isa.VectorRegisters {
+			return false, fmt.Errorf("vector register out of range: %d", reg)
+		}
+		for i := 0; i < isa.VectorLanes; i++ {
+			v, err := c.readWord(addr + uint32(4*i))
+			if err != nil {
+				return false, err
+			}
+			c.vr[reg][i] = v
+		}
+		c.pc = nextPC
+	case isa.OpVStore:
+		reg := int(c.mem[c.pc+1])
+		addr := uint32(readImm(c.pc + 2))
+		if reg >= isa.VectorRegisters {
+			return false, fmt.Errorf("vector register out of range: %d", reg)
+		}
+		for i := 0; i < isa.VectorLanes; i++ {
+			if err := c.writeWord(addr+uint32(4*i), c.vr[reg][i]); err != nil {
+				return false, err
+			}
+		}
+		c.pc = nextPC
+	case isa.OpVAdd, isa.OpVSub, isa.OpVMul, isa.OpVDiv, isa.OpVCmp:
+		dst := int(c.mem[c.pc+1])
+		a := int(c.mem[c.pc+2])
+		b := int(c.mem[c.pc+3])
+		if dst >= isa.VectorRegisters || a >= isa.VectorRegisters || b >= isa.VectorRegisters {
+			return false, fmt.Errorf("vector register out of range")
+		}
+		for i := 0; i < isa.VectorLanes; i++ {
+			av := c.vr[a][i]
+			bv := c.vr[b][i]
+			switch op {
+			case isa.OpVAdd:
+				c.vr[dst][i] = av + bv
+			case isa.OpVSub:
+				c.vr[dst][i] = av - bv
+			case isa.OpVMul:
+				c.vr[dst][i] = av * bv
+			case isa.OpVDiv:
+				if bv == 0 {
+					c.vr[dst][i] = 0
+				} else {
+					c.vr[dst][i] = av / bv
+				}
+			case isa.OpVCmp:
+				if av == bv {
+					c.vr[dst][i] = 1
+				} else {
+					c.vr[dst][i] = 0
+				}
+			}
+		}
+		c.pc = nextPC
 	default:
 		return false, fmt.Errorf("unknown opcode %d", op)
 	}

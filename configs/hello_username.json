@@ -1,0 +1,11 @@
+{
+  "max_ticks": 200000,
+  "events": [
+    { "tick": 800, "token": "A" },
+    { "tick": 920, "token": "l" },
+    { "tick": 1040, "token": "i" },
+    { "tick": 1160, "token": "c" },
+    { "tick": 1280, "token": "e" },
+    { "tick": 1400, "token": "\n" }
+  ]
+}

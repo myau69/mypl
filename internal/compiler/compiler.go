@@ -60,6 +60,24 @@ func (e *emitter) emitImmFix(op isa.Opcode, symbol string, line int) {
 	})
 }
 
+func (e *emitter) emitVLoadStore(op isa.Opcode, reg byte, addr int32) {
+	e.code = append(e.code, byte(op), reg)
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, uint32(addr))
+	e.code = append(e.code, b...)
+}
+
+func (e *emitter) emitVLoadStoreFix(op isa.Opcode, reg byte, symbol string, line int) {
+	e.code = append(e.code, byte(op), reg)
+	off := len(e.code)
+	e.code = append(e.code, 0, 0, 0, 0)
+	e.fixups = append(e.fixups, fixup{offset: off, symbol: symbol, line: line})
+}
+
+func (e *emitter) emitV3(op isa.Opcode, dst, a, b byte) {
+	e.code = append(e.code, byte(op), dst, a, b)
+}
+
 func Compile(src string, opts Options) (Result, error) {
 	if opts.CodeBase == 0 {
 		opts.CodeBase = DefaultCodeBase
@@ -231,6 +249,52 @@ func Compile(src string, opts Options) (Result, error) {
 			}
 			constants[nameTok.Text] = v
 
+		case "vload", "vstore":
+			if i+2 >= len(tokens) {
+				return Result{}, fmt.Errorf("line %d: %s requires <Vn> <addr>", tok.Line, t)
+			}
+			regTok := tokens[i+1]
+			addrTok := tokens[i+2]
+			i += 2
+			reg, err := parseVectorReg(regTok.Text)
+			if err != nil {
+				return Result{}, fmt.Errorf("line %d: %v", regTok.Line, err)
+			}
+			op := isa.OpVLoad
+			if t == "vstore" {
+				op = isa.OpVStore
+			}
+			if v, err := resolveAddrToken(addrTok, symbols, constants); err == nil {
+				emit.emitVLoadStore(op, reg, v)
+			} else {
+				emit.emitVLoadStoreFix(op, reg, addrTok.Text, addrTok.Line)
+			}
+		case "vadd", "vsub", "vmul", "vdiv", "vcmp":
+			if i+3 >= len(tokens) {
+				return Result{}, fmt.Errorf("line %d: %s requires <Vd> <Va> <Vb>", tok.Line, t)
+			}
+			r0, err := parseVectorReg(tokens[i+1].Text)
+			if err != nil {
+				return Result{}, fmt.Errorf("line %d: %v", tokens[i+1].Line, err)
+			}
+			r1, err := parseVectorReg(tokens[i+2].Text)
+			if err != nil {
+				return Result{}, fmt.Errorf("line %d: %v", tokens[i+2].Line, err)
+			}
+			r2, err := parseVectorReg(tokens[i+3].Text)
+			if err != nil {
+				return Result{}, fmt.Errorf("line %d: %v", tokens[i+3].Line, err)
+			}
+			i += 3
+			op := map[string]isa.Opcode{
+				"vadd": isa.OpVAdd,
+				"vsub": isa.OpVSub,
+				"vmul": isa.OpVMul,
+				"vdiv": isa.OpVDiv,
+				"vcmp": isa.OpVCmp,
+			}[t]
+			emit.emitV3(op, r0, r1, r2)
+
 		default:
 			if op, ok := builtinNoArg(t); ok {
 				emit.emit(op)
@@ -387,6 +451,12 @@ func buildListing(img binaryfmt.Image) (string, error) {
 		case isa.OpPush, isa.OpJmp, isa.OpJz, isa.OpJnz, isa.OpJltz, isa.OpJgtz, isa.OpJgez, isa.OpJlez, isa.OpCall:
 			v := int32(binary.LittleEndian.Uint32(code[pc+1 : pc+5]))
 			mn = fmt.Sprintf("%s %d", op.String(), v)
+		case isa.OpVLoad, isa.OpVStore:
+			reg := code[pc+1]
+			v := int32(binary.LittleEndian.Uint32(code[pc+2 : pc+6]))
+			mn = fmt.Sprintf("%s V%d %d", op.String(), reg, v)
+		case isa.OpVAdd, isa.OpVSub, isa.OpVMul, isa.OpVDiv, isa.OpVCmp:
+			mn = fmt.Sprintf("%s V%d V%d V%d", op.String(), code[pc+1], code[pc+2], code[pc+3])
 		}
 		fmt.Fprintf(&b, "%05d - %s - %s\n", addr, hexPart, mn)
 		pc += ln
@@ -402,4 +472,31 @@ func next2(tokens []Token, i *int) (Token, Token, bool) {
 	b := tokens[*i+2]
 	*i += 2
 	return a, b, true
+}
+
+func resolveAddrToken(tok Token, symbols map[string]uint32, constants map[string]int32) (int32, error) {
+	if v, err := parseLiteral(tok.Text); err == nil {
+		return v, nil
+	}
+	if strings.HasPrefix(tok.Text, "&") {
+		sym := strings.TrimPrefix(tok.Text, "&")
+		if v, ok := symbols[sym]; ok {
+			return int32(v), nil
+		}
+		return 0, fmt.Errorf("line %d: unresolved symbol %q", tok.Line, sym)
+	}
+	if v, ok := symbols[tok.Text]; ok {
+		return int32(v), nil
+	}
+	if c, ok := constants[tok.Text]; ok {
+		return c, nil
+	}
+	return 0, fmt.Errorf("line %d: unsupported address token %q", tok.Line, tok.Text)
+}
+
+func parseVectorReg(tok string) (byte, error) {
+	if len(tok) != 2 || tok[0] != 'V' || tok[1] < '0' || tok[1] > '3' {
+		return 0, fmt.Errorf("vector register must be V0..V3, got %q", tok)
+	}
+	return tok[1] - '0', nil
 }

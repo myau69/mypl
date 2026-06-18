@@ -34,7 +34,7 @@ func (t Trace) String(limit int) string {
 		fmt.Fprintf(&b, "[%06d..%06d] pc=%05d irq=%t instr=%-24s ds=%v rs=%v",
 			e.TickStart, e.TickEnd, e.PC, e.InIRQ, e.Instr, e.DS, e.RS)
 		if e.Event != "" {
-			fmt.Fprintf(&b, "events=%s", e.Event)
+			fmt.Fprintf(&b, " events=%s", e.Event)
 		}
 		b.WriteByte('\n')
 	}

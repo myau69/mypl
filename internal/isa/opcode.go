@@ -47,6 +47,20 @@ const (
 	OpIret
 
 	OpHalt
+
+	OpVLoad
+	OpVStore
+
+	OpVAdd
+	OpVSub
+	OpVMul
+	OpVDiv
+	OpVCmp
+)
+
+const (
+	VectorRegisters = 4
+	VectorLanes     = 4
 )
 
 func (op Opcode) String() string {
@@ -123,6 +137,20 @@ func (op Opcode) String() string {
 		return "iret"
 	case OpHalt:
 		return "halt"
+	case OpVLoad:
+		return "vload"
+	case OpVStore:
+		return "vstore"
+	case OpVAdd:
+		return "vadd"
+	case OpVSub:
+		return "vsub"
+	case OpVMul:
+		return "vmul"
+	case OpVDiv:
+		return "vdiv"
+	case OpVCmp:
+		return "vcmp"
 	default:
 		return fmt.Sprintf("unknown(%d)", byte(op))
 	}
@@ -136,6 +164,10 @@ func LengthAt(code []byte, pc uint32) (int, error) {
 	switch op {
 	case OpPush, OpJmp, OpJz, OpJnz, OpJltz, OpJgtz, OpJgez, OpJlez, OpCall:
 		return 5, nil
+	case OpVLoad, OpVStore:
+		return 6, nil
+	case OpVAdd, OpVSub, OpVMul, OpVDiv, OpVCmp:
+		return 4, nil
 	default:
 		return 1, nil
 	}
@@ -143,6 +175,10 @@ func LengthAt(code []byte, pc uint32) (int, error) {
 
 func Ticks(op Opcode) uint64 {
 	switch op {
+	case OpVLoad, OpVStore:
+		return 6
+	case OpVAdd, OpVSub, OpVMul, OpVDiv, OpVCmp:
+		return 4
 	case OpLoad, OpStore:
 		return 3
 	case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpAnd, OpOr, OpXor, OpShl, OpShr, OpEq, OpLt, OpGt:
